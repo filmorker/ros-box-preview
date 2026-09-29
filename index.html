@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Box Texture Preview</title>
+<style>
+/* Layout: left control column, right 3D viewport + flat texture strip. Colours are cardboard/print-shop inspired. */
+:root {
+  --bg: #eef0ec; --panel: #ffffff; --fg: #1f2320; --muted: #66706a; --line: #d3d8d2;
+  --accent: #c2410c; --accent-fg: #ffffff; --ok: #2f7d4f; --warn: #b45309; --view: #d9ddd6;
+  --f-ui: "Segoe UI", system-ui, sans-serif; --f-mono: "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #171a18; --panel: #212622; --fg: #e7ebe6; --muted: #9aa49d; --line: #353c37;
+    --accent: #f97316; --accent-fg: #1a0d04; --ok: #4ade80; --warn: #fbbf24; --view: #2a302c; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--f-ui); }
+.app { display: grid; grid-template-columns: 340px 1fr; height: 100%; }
+aside { overflow-y: auto; border-right: 1px solid var(--line); background: var(--panel); padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+main { display: grid; grid-template-rows: 1fr auto; min-width: 0; min-height: 0; }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+section { display: flex; flex-direction: column; gap: 8px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dims { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+label.f { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+input[type=number], input[type=text], select { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+input[type=color] { width: 40px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: none; padding: 2px; }
+button { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+.drop { border: 2px dashed var(--line); border-radius: 8px; padding: 14px; text-align: center; color: var(--muted); cursor: pointer; }
+.drop.over { border-color: var(--accent); color: var(--fg); }
+.note { font-size: 12px; color: var(--muted); }
+.msg { font-size: 12px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); }
+.msg.ok { color: var(--ok); } .msg.warn { color: var(--warn); }
+.mono { font-family: var(--f-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+#view { position: relative; background: var(--view); min-height: 0; }
+#view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.cams { position: absolute; top: 10px; left: 10px; display: flex; gap: 4px; flex-wrap: wrap; }
+.cams button { padding: 4px 8px; font-size: 12px; background: var(--panel); }
+.hint { position: absolute; bottom: 8px; left: 10px; font-size: 12px; color: var(--muted); }
+.flat { border-top: 1px solid var(--line); background: var(--panel); padding: 8px 12px; display: flex; gap: 12px; align-items: center; overflow-x: auto; }
+.flat canvas { height: 150px; width: auto; border: 1px solid var(--line); background: #fff; }
+textarea { width: 100%; height: 64px; font-family: var(--f-mono); font-size: 12px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px; resize: vertical; }
+@media (max-width: 760px) { .app { grid-template-columns: 1fr; grid-template-rows: auto 70vh; height: auto; } aside { border-right: 0; border-bottom: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <h1>Box Texture Preview</h1>
+  <p class="note">Preview a box texture exactly as the mod maps it, before it goes into the game. Uses the same unfolded-box layout as the mod's templates.</p>
+
+  <section>
+    <h2>1. Box</h2>
+    <label class="f"><span>Preset</span><select id="preset"></select></label>
+    <div class="dims">
+      <label class="f"><span>Width, cm</span><input id="w" type="number" min="1" max="300" step="0.5"></label>
+      <label class="f"><span>Depth, cm</span><input id="d" type="number" min="1" max="300" step="0.5"></label>
+      <label class="f"><span>Height, cm</span><input id="h" type="number" min="1" max="300" step="0.5"></label>
+    </div>
+    <label class="f"><span>Item id (letters, digits, _)</span><input id="sid" type="text"></label>
+    <div class="mono" id="tplsize"></div>
+  </section>
+
+  <section>
+    <h2>2. Template</h2>
+    <div class="row">
+      <label class="f" style="flex-direction:row;align-items:center;gap:6px"><span>Scale</span>
+        <select id="scale" style="width:auto"><option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option></select></label>
+      <input id="bodycol" type="color" value="#f2730d" title="Base colour">
+    </div>
+    <div class="row">
+      <button class="primary" id="dlTpl">Download template</button>
+      <button id="dlBlank">Blank body</button>
+      <button id="dlTest">Test grid</button>
+    </div>
+    <p class="note">Paint over the template in any editor, keep the image size (or any size with the same proportions). Red boxes are the faces, the white gaps between them are never visible.</p>
+  </section>
+
+  <section>
+    <h2>3. Your texture</h2>
+    <div class="drop" id="drop" tabindex="0">Drop a PNG/JPG here or click to choose</div>
+    <input id="file" type="file" accept="image/*" hidden>
+    <div id="texinfo" class="msg" hidden></div>
+    <div class="row">
+      <label class="row" style="gap:4px"><input type="checkbox" id="showLines"><span>Show face borders on model</span></label>
+    </div>
+    <div class="row">
+      <button id="dlBleed" disabled>Download with seam fix</button>
+    </div>
+    <p class="note">Seam fix copies the edge pixels of every face outwards into the gaps. This hides thin coloured lines on box edges when the game shrinks the texture at a distance.</p>
+  </section>
+
+  <section>
+    <h2>4. Send to the modder</h2>
+    <textarea id="spec" readonly></textarea>
+    <div class="row"><button id="copySpec">Copy</button><span class="note" id="copied"></span></div>
+    <p class="note">Send this line together with the texture file named as shown.</p>
+  </section>
+</aside>
+
+<main>
+  <div id="view">
+    <div class="cams">
+      <button data-cam="front">Front</button><button data-cam="back">Back</button>
+      <button data-cam="left">Left</button><button data-cam="right">Right</button>
+      <button data-cam="top">Top</button><button data-cam="bottom">Bottom</button>
+      <button data-cam="iso">3/4</button><button id="spin">Spin</button>
+    </div>
+    <div class="hint">Drag to rotate, wheel to zoom</div>
+  </div>
+  <div class="flat"><canvas id="flat"></canvas><span class="note" id="flatnote"></span></div>
+</main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+// ---------- strings used from code ----------
+const STR = { custom: "Custom box", copied: "Copied", tex_ok: "Proportions match the template",
+  tex_bad: "Proportions do not match the template ({a} vs {b}): the picture will be stretched. Download the template for this box size.",
+  tex_small: "The picture is smaller than the 1× template, it will look blurry in game.", nothree: "The 3D library did not load (internet needed). Templates can still be downloaded." };
+const T = k => STR[k] || k;
+
+// ---------- presets (sizes in cm, same as blender/costumes_specs.py) ----------
+const PRESETS = [
+  { id: "costume_box", name: "Cool Ghosts Costume Set", w: 30, d: 8, h: 40, col: "#f2730d" },
+  { id: "devil_costume", name: "Devil Costume Set", w: 65, d: 8, h: 30, col: "#b30d0d" },
+];
+const $ = id => document.getElementById(id);
+function fillPresets() {
+  const sel = $("preset"), v = sel.value;
+  sel.innerHTML = PRESETS.map((p, i) => `<option value="${i}">${p.name} (${p.w}×${p.d}×${p.h})</option>`).join("") + `<option value="c">${T("custom")}</option>`;
+  sel.value = v || "0";
+}
+
+// ---------- layout: exact copy of body_atlas() in blender/make_batch.py (box branch) ----------
+function layout() {
+  const W = +$("w").value / 100, D = +$("d").value / 100, H = +$("h").value / 100;
+  const g = 0.03 * Math.max(W, D, H);
+  const cx = { LEFT: 0, FRONT: D + g, RIGHT: D + W + 2 * g, BACK: 2 * D + W + 3 * g };
+  const TW = 2 * D + 2 * W + 3 * g, TH = 2 * D + H + 2 * g, mid = D + g;
+  const R = { LEFT: [cx.LEFT, mid, D, H], FRONT: [cx.FRONT, mid, W, H], RIGHT: [cx.RIGHT, mid, D, H],
+              BACK: [cx.BACK, mid, W, H], TOP: [cx.FRONT, D + H + 2 * g, W, D], BOTTOM: [cx.FRONT, 0, W, D] };
+  const regions = {};
+  for (const n in R) regions[n] = [R[n][0] / TW, R[n][1] / TH, R[n][2] / TW, R[n][3] / TH]; // uv units, y up
+  const longest = Math.max(W, D, H) < 0.12 ? 512 : 1024;
+  const k = longest / Math.max(TW, TH);
+  return { W, D, H, TW, TH, regions, px: Math.max(64, Math.round(TW * k)), py: Math.max(64, Math.round(TH * k)) };
+}
+// region rect in pixels (top-left origin) for an image of size iw x ih
+const rpx = (r, iw, ih) => { const x0 = Math.round(r[0] * iw), x1 = Math.round((r[0] + r[2]) * iw);
+  const y0 = Math.round((1 - r[1] - r[3]) * ih), y1 = Math.round((1 - r[1]) * ih); return [x0, y0, x1 - x0, y1 - y0]; };
+
+// ---------- 2D images ----------
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function drawTemplate(L, s) {
+  const c = document.createElement("canvas"); c.width = L.px * s; c.height = L.py * s;
+  const x = c.getContext("2d"), [r, g, b] = hexRgb($("bodycol").value);
+  const tint = `rgb(${255 - (255 - r) * .25 | 0},${255 - (255 - g) * .25 | 0},${255 - (255 - b) * .25 | 0})`;
+  x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+  const fs = Math.max(10, Math.min(L.px, L.py) * s * 0.05 | 0), small = Math.max(8, fs / 2 | 0);
+  const bev = 0.004 / L.TW * c.width; // 4 mm bevel of the real model
+  for (const [n, reg] of Object.entries(L.regions)) {
+    const [px, py, pw, ph] = rpx(reg, c.width, c.height);
+    x.fillStyle = tint; x.fillRect(px, py, pw, ph);
+    x.strokeStyle = "#969696"; x.lineWidth = Math.max(1, s / 2);
+    if (pw > 3 * bev && ph > 3 * bev) x.strokeRect(px + bev, py + bev, pw - 2 * bev, ph - 2 * bev);
+    x.strokeStyle = "#dc0000"; x.lineWidth = 2 * s; x.strokeRect(px + s, py + s, pw - 2 * s, ph - 2 * s);
+    x.fillStyle = "#c80000"; x.textAlign = "center"; x.textBaseline = "middle";
+    x.font = `bold ${fs}px Arial`; x.fillText(n, px + pw / 2, py + ph / 2);
+    x.font = `${small}px Arial`; x.fillStyle = "#8a8a8a";
+    const hint = { TOP: "▼ front edge ▼", BOTTOM: "▲ front edge ▲", LEFT: "front edge ▶", RIGHT: "◀ front edge" }[n];
+    if (hint) {
+      if (n === "TOP") x.fillText(hint, px + pw / 2, py + ph - small);
+      else if (n === "BOTTOM") x.fillText(hint, px + pw / 2, py + small);
+      else if (ph > small * 6) x.fillText(n === "LEFT" ? "▶" : "◀", n === "LEFT" ? px + pw - small : px + small, py + ph / 2 + fs);
+    }
+    if (n !== "TOP" && n !== "BOTTOM" && ph > small * 4) x.fillText("▲ up", px + pw / 2, py + small * 1.2);
+  }
+  x.font = `bold ${small}px Arial`; x.fillStyle = "#5a5a5a"; x.textAlign = "right"; x.textBaseline = "bottom";
+  x.fillText(`${sid()}  ${c.width}x${c.height}  (${$("w").value}×${$("d").value}×${$("h").value} cm)`, c.width - 6 * s, c.height - 6 * s);
+  return c;
+}
+function drawBlank(L, s) {
+  const c = document.createElement("canvas"); c.width = L.px * s; c.height = L.py * s;
+  const x = c.getContext("2d"); x.fillStyle = $("bodycol").value; x.fillRect(0, 0, c.width, c.height); return c;
+}
+// test grid: 5 cm lines in world units + face names; horizontal lines must run unbroken around the sides
+function drawTest(L, s) {
+  const c = document.createElement("canvas"); c.width = L.px * s; c.height = L.py * s;
+  const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+  const cols = { FRONT: "#fde68a", BACK: "#bfdbfe", LEFT: "#bbf7d0", RIGHT: "#fecaca", TOP: "#e9d5ff", BOTTOM: "#d1d5db" };
+  const m = c.width / L.TW; // px per metre
+  for (const [n, reg] of Object.entries(L.regions)) {
+    const [px, py, pw, ph] = rpx(reg, c.width, c.height);
+    x.fillStyle = cols[n]; x.fillRect(px, py, pw, ph);
+    x.save(); x.beginPath(); x.rect(px, py, pw, ph); x.clip();
+    x.strokeStyle = "#333"; x.lineWidth = Math.max(1, s);
+    for (let v = 0; v <= pw + 1; v += 0.05 * m) { x.beginPath(); x.moveTo(px + v, py); x.lineTo(px + v, py + ph); x.stroke(); }
+    for (let v = 0; v <= ph + 1; v += 0.05 * m) { x.beginPath(); x.moveTo(px, py + ph - v); x.lineTo(px + pw, py + ph - v); x.stroke(); }
+    x.fillStyle = "#111"; x.textAlign = "center"; x.textBaseline = "middle";
+    x.font = `bold ${Math.max(10, Math.min(pw, ph) * 0.18 | 0)}px Arial`; x.fillText(n, px + pw / 2, py + ph / 2);
+    x.restore();
+  }
+  return c;
+}
+// seam fix: extend each face's edge pixels outward into the gaps (half gap each side)
+function bleed(img, L) {
+  const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
+  const x = c.getContext("2d"); x.drawImage(img, 0, 0);
+  const n = Math.max(1, Math.floor(0.03 * Math.max(L.W, L.D, L.H) / L.TW * c.width / 2) - 1);
+  const src = x.getImageData(0, 0, c.width, c.height), out = x.getImageData(0, 0, c.width, c.height);
+  const cw = c.width, ch = c.height, S = src.data, O = out.data;
+  const cp = (tx, ty, sx, sy) => { if (tx < 0 || ty < 0 || tx >= cw || ty >= ch) return;
+    const t = (ty * cw + tx) * 4, f = (sy * cw + sx) * 4; O[t] = S[f]; O[t + 1] = S[f + 1]; O[t + 2] = S[f + 2]; O[t + 3] = S[f + 3]; };
+  for (const reg of Object.values(L.regions)) {
+    const [px, py, pw, ph] = rpx(reg, cw, ch), x1 = px + pw - 1, y1 = py + ph - 1;
+    for (let d = 1; d <= n; d++) {
+      for (let xx = px - d; xx <= x1 + d; xx++) { const sx = Math.min(x1, Math.max(px, xx)); cp(xx, py - d, sx, py); cp(xx, y1 + d, sx, y1); }
+      for (let yy = py - d; yy <= y1 + d; yy++) { const sy = Math.min(y1, Math.max(py, yy)); cp(px - d, yy, px, sy); cp(x1 + d, yy, x1, sy); }
+    }
+  }
+  x.putImageData(out, 0, 0); return c;
+}
+function save(canvas, name) {
+  canvas.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000); }, "image/png");
+}
+const sid = () => ($("sid").value || "my_box").replace(/[^A-Za-z0-9_]/g, "_");
+
+// ---------- state ----------
+let userImg = null, userName = "";
+let L = null;
+
+function refreshTexInfo() {
+  const box = $("texinfo");
+  if (!userImg || !L) { box.hidden = true; return; }
+  const a = userImg.width / userImg.height, b = L.px / L.py, ok = Math.abs(a / b - 1) < 0.01;
+  box.hidden = false; box.className = "msg " + (ok ? "ok" : "warn");
+  let t = `${userName}: ${userImg.width}×${userImg.height}. ` + (ok ? T("tex_ok") : T("tex_bad").replace("{a}", a.toFixed(3)).replace("{b}", b.toFixed(3)));
+  if (ok && userImg.width < L.px) t += " " + T("tex_small");
+  box.textContent = t;
+}
+function update() {
+  L = layout();
+  $("tplsize").textContent = `template 1× = ${L.px}×${L.py} px`;
+  refreshTexInfo();
+  const s = $("sid").value ? sid() : "my_box";
+  const [r, g, b] = hexRgb($("bodycol").value).map(v => (v / 255).toFixed(2));
+  $("spec").value = `dict(id="${s}", kind="box", size=(${(L.W).toFixed(3)}, ${(L.D).toFixed(3)}, ${(L.H).toFixed(3)}), bevel=0.004,\n     label=False, body=(${r}, ${g}, ${b}))  # texture: ${s}_body.png`;
+  $("dlBleed").disabled = !userImg;
+  drawFlat(); rebuild3D();
+}
+function currentTexCanvas() {
+  let base = userImg || drawTemplate(L, 1);
+  if (!$("showLines").checked) return base;
+  const c = document.createElement("canvas"); c.width = base.width; c.height = base.height;
+  const x = c.getContext("2d"); x.drawImage(base, 0, 0);
+  x.strokeStyle = "#ff00ff"; x.lineWidth = Math.max(2, c.width / 400);
+  for (const reg of Object.values(L.regions)) { const [px, py, pw, ph] = rpx(reg, c.width, c.height); x.strokeRect(px, py, pw, ph); }
+  return c;
+}
+function drawFlat() {
+  const src = currentTexCanvas(), f = $("flat");
+  f.width = src.width; f.height = src.height; f.getContext("2d").drawImage(src, 0, 0);
+  $("flatnote").textContent = userImg ? userName : "template";
+}
+
+// ---------- 3D ----------
+let renderer, scene, camera, mesh, tex, yaw = -0.6, pitch = 0.35, dist = 1.6, spin = false;
+function faceUV(reg, u, v) { return [reg[0] + u * reg[2], reg[1] + v * reg[3]]; }
+function boxGeometry() {
+  const { W, D, H, regions: R } = L, w = W / 2, d = D / 2, h = H / 2;
+  const pos = [], uv = [], nor = [], idx = [];
+  // each face: 4 corners in three.js space (x right, y up, z toward the front), as (u,v) = (0,0),(1,0),(1,1),(0,1)
+  // mapping mirrors make_batch.py: Blender (x, y, z) -> three (x, z, -y); front = Blender -Y = three +Z
+  const faces = [
+    ["FRONT", [0, 0, 1], [[-w, -h, d], [w, -h, d], [w, h, d], [-w, h, d]]],
+    ["BACK", [0, 0, -1], [[w, -h, -d], [-w, -h, -d], [-w, h, -d], [w, h, -d]]],
+    ["RIGHT", [1, 0, 0], [[w, -h, d], [w, -h, -d], [w, h, -d], [w, h, d]]],
+    ["LEFT", [-1, 0, 0], [[-w, -h, -d], [-w, -h, d], [-w, h, d], [-w, h, -d]]],
+    ["TOP", [0, 1, 0], [[-w, h, d], [w, h, d], [w, h, -d], [-w, h, -d]]],
+    ["BOTTOM", [0, -1, 0], [[-w, -h, -d], [w, -h, -d], [w, -h, d], [-w, -h, d]]],
+  ];
+  const cuv = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  faces.forEach(([n, nn, cs], i) => {
+    cs.forEach((p, j) => { pos.push(...p); nor.push(...nn); uv.push(...faceUV(R[n], ...cuv[j])); });
+    const o = i * 4; idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx); return g;
+}
+function init3D() {
+  if (!window.THREE) { $("view").insertAdjacentHTML("beforeend", `<p class="msg warn" style="position:absolute;top:50px;left:10px;right:10px">${T("nothree")}</p>`); return; }
+  const view = $("view");
+  renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio)); renderer.outputEncoding = THREE.sRGBEncoding;
+  view.prepend(renderer.domElement);
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue("--view").trim() || "#d9ddd6");
+  camera = new THREE.PerspectiveCamera(35, 1, 0.01, 50);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f88, 0.75));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.55); sun.position.set(1.2, 2, 1.6); scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xffffff, 0.2); fill.position.set(-1.5, 0.5, -1); scene.add(fill);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), new THREE.MeshLambertMaterial({ color: 0x9aa09a }));
+  floor.rotation.x = -Math.PI / 2; floor.name = "floor"; scene.add(floor);
+  let drag = null;
+  const el = renderer.domElement;
+  el.addEventListener("pointerdown", e => { drag = [e.clientX, e.clientY]; el.setPointerCapture(e.pointerId); spin = false; });
+  el.addEventListener("pointermove", e => { if (!drag) return; yaw -= (e.clientX - drag[0]) * 0.008;
+    pitch = Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - drag[1]) * 0.008)); drag = [e.clientX, e.clientY]; });
+  el.addEventListener("pointerup", () => drag = null);
+  el.addEventListener("wheel", e => { e.preventDefault(); dist = Math.max(0.15, Math.min(8, dist * (1 + Math.sign(e.deltaY) * 0.1))); }, { passive: false });
+  new ResizeObserver(resize).observe(view); resize();
+  (function loop() { requestAnimationFrame(loop);
+    if (spin) yaw += 0.01;
+    const cy = L ? L.H / 2 : 0.2;
+    camera.position.set(Math.sin(yaw) * Math.cos(pitch) * dist, cy + Math.sin(pitch) * dist, Math.cos(yaw) * Math.cos(pitch) * dist);
+    camera.lookAt(0, cy, 0); renderer.render(scene, camera); })();
+}
+function resize() { if (!renderer) return; const v = $("view"); renderer.setSize(v.clientWidth, v.clientHeight, false);
+  camera.aspect = v.clientWidth / Math.max(1, v.clientHeight); camera.updateProjectionMatrix(); }
+function rebuild3D() {
+  if (!renderer) return;
+  if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
+  if (tex) tex.dispose();
+  tex = new THREE.CanvasTexture(currentTexCanvas());
+  tex.encoding = THREE.sRGBEncoding; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  tex.minFilter = THREE.LinearMipmapLinearFilter; // like the game: mipmaps show seam bleeding at a distance
+  mesh = new THREE.Mesh(boxGeometry(), new THREE.MeshLambertMaterial({ map: tex }));
+  mesh.position.y = L.H / 2; scene.add(mesh);
+  const m = Math.max(L.W, L.D, L.H); if (!rebuild3D.done) { dist = m * 3; rebuild3D.done = true; }
+}
+const CAMS = { front: [0, 0.05], back: [Math.PI, 0.05], left: [-Math.PI / 2, 0.05], right: [Math.PI / 2, 0.05], top: [0, 1.5], bottom: [0, -1.5], iso: [-0.6, 0.35] };
+
+// ---------- wiring ----------
+function setPreset(i) {
+  if (i === "c") return; const p = PRESETS[+i];
+  $("w").value = p.w; $("d").value = p.d; $("h").value = p.h; $("sid").value = p.id; $("bodycol").value = p.col; rebuild3D.done = false; update();
+}
+function loadFile(f) {
+  if (!f) return; const img = new Image();
+  img.onload = () => { userImg = img; userName = f.name; update(); };
+  img.src = URL.createObjectURL(f);
+}
+$("preset").addEventListener("change", e => setPreset(e.target.value));
+for (const id of ["w", "d", "h"]) $(id).addEventListener("input", () => { $("preset").value = "c"; update(); });
+$("sid").addEventListener("input", update);
+$("bodycol").addEventListener("input", update);
+$("showLines").addEventListener("change", update);
+$("dlTpl").onclick = () => save(drawTemplate(L, +$("scale").value), `${sid()}_body_template.png`);
+$("dlBlank").onclick = () => save(drawBlank(L, +$("scale").value), `${sid()}_body.png`);
+$("dlTest").onclick = () => { const c = drawTest(L, +$("scale").value); save(c, `${sid()}_testgrid.png`);
+  const img = new Image(); img.onload = () => { userImg = img; userName = `${sid()}_testgrid.png`; update(); }; img.src = c.toDataURL(); };
+$("dlBleed").onclick = () => userImg && save(bleed(userImg, L), `${sid()}_body.png`);
+$("copySpec").onclick = () => { const t = $("spec"); navigator.clipboard.writeText(t.value).then(() => $("copied").textContent = T("copied"),
+  () => { t.select(); document.execCommand("copy"); $("copied").textContent = T("copied"); }); };
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } };
+$("file").onchange = e => loadFile(e.target.files[0]);
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); loadFile(e.dataTransfer.files[0]); };
+document.querySelectorAll("[data-cam]").forEach(b => b.onclick = () => { spin = false; const c = CAMS[b.dataset.cam]; yaw = c[0]; pitch = c[1]; });
+$("spin").onclick = () => { spin = !spin; };
+
+fillPresets(); init3D(); setPreset("0");
+</script>
+</body>
+</html>
