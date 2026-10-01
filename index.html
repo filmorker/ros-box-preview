@@ -132,7 +132,9 @@ const T = k => STR[k] || k;
 const PRESETS = [
   { id: "costume_box", name: "Cool Ghosts Costume Set", w: 30, d: 8, h: 40, col: "#f2730d" },
   { id: "devil_costume", name: "Devil Costume Set", w: 65, d: 8, h: 30, col: "#b30d0d" },
+  { id: "trick_treat_bucket", name: "Trick or Treat Bucket (round, width = diameter)", w: 20, d: 20, h: 18, col: "#f28c0d", kind: "bucket" },
 ];
+let KIND = "box";
 const $ = id => document.getElementById(id);
 function fillPresets() {
   const sel = $("preset"), v = sel.value;
@@ -143,6 +145,15 @@ function fillPresets() {
 // ---------- layout: exact copy of body_atlas() in blender/make_batch.py (box branch) ----------
 function layout() {
   const W = +$("w").value / 100, D = +$("d").value / 100, H = +$("h").value / 100;
+  if (KIND === "bucket") {   // round branch of body_atlas(): side strip (front = middle, seam at back) + bottom/top discs
+    const R = W / 2, g = 0.03 * Math.max(W, H), C = 2 * Math.PI * R;
+    const TW = Math.max(C, 4 * R + g), TH = 2 * R + g + H;
+    const Rg = { "SIDE (front = middle)": [0, 2 * R + g, C, H], BOTTOM: [0, 0, 2 * R, 2 * R], TOP: [2 * R + g, 0, 2 * R, 2 * R] };
+    const regions = {};
+    for (const n in Rg) regions[n] = [Rg[n][0] / TW, Rg[n][1] / TH, Rg[n][2] / TW, Rg[n][3] / TH];
+    const k = (Math.max(W, H) < 0.12 ? 512 : 1024) / Math.max(TW, TH);
+    return { W, D: W, H, R, g, C, TW, TH, regions, px: Math.max(64, Math.round(TW * k)), py: Math.max(64, Math.round(TH * k)) };
+  }
   const g = 0.03 * Math.max(W, D, H);
   const cx = { LEFT: 0, FRONT: D + g, RIGHT: D + W + 2 * g, BACK: 2 * D + W + 3 * g };
   const TW = 2 * D + 2 * W + 3 * g, TH = 2 * D + H + 2 * g, mid = D + g;
@@ -254,7 +265,7 @@ function update() {
   refreshTexInfo();
   const s = $("sid").value ? sid() : "my_box";
   const [r, g, b] = hexRgb($("bodycol").value).map(v => (v / 255).toFixed(2));
-  $("spec").value = `dict(id="${s}", kind="box", size=(${(L.W).toFixed(3)}, ${(L.D).toFixed(3)}, ${(L.H).toFixed(3)}), bevel=0.004,\n     label=False, body=(${r}, ${g}, ${b}))  # texture: ${s}_body.png`;
+  $("spec").value = `dict(id="${s}", kind="${KIND}", size=(${(L.W).toFixed(3)}, ${(L.D).toFixed(3)}, ${(L.H).toFixed(3)}), bevel=0.004,\n     label=False, body=(${r}, ${g}, ${b}))  # texture: ${s}_body.png`;
   $("dlBleed").disabled = !userImg;
   drawFlat(); rebuild3D();
 }
@@ -276,6 +287,28 @@ function drawFlat() {
 // ---------- 3D ----------
 let renderer, scene, camera, mesh, tex, yaw = -0.6, pitch = 0.35, dist = 1.6, spin = false;
 function faceUV(reg, u, v) { return [reg[0] + u * reg[2], reg[1] + v * reg[3]]; }
+function bucketGeometry() {
+  const { R, g, C, H, TW, TH } = L, N = 48, pos = [], uv = [], nor = [], idx = [];
+  const P = (x, y, z, nx, ny, nz, u, v) => { pos.push(x, y, z); nor.push(nx, ny, nz); uv.push(u, v); return pos.length / 3 - 1; };
+  for (let i = 0; i <= N; i++) {   // side: angle 0 = front (+Z), seam at the back
+    const a = -Math.PI + 2 * Math.PI * i / N, x = Math.sin(a) * R, z = Math.cos(a) * R, u = (a + Math.PI) / (2 * Math.PI) * C / TW;
+    P(x, -H / 2, z, Math.sin(a), 0, Math.cos(a), u, (2 * R + g) / TH);
+    P(x, H / 2, z, Math.sin(a), 0, Math.cos(a), u, (2 * R + g + H) / TH);
+    if (i) { const o = (i - 1) * 2; idx.push(o, o + 2, o + 1, o + 1, o + 2, o + 3); }
+  }
+  for (const top of [true, false]) {
+    const y = top ? H / 2 : -H / 2, ny = top ? 1 : -1;
+    const UV = (x, z) => top ? [(2 * R + g + R + x) / TW, (R - z) / TH] : [(R + x) / TW, (R + z) / TH];
+    const c = P(0, y, 0, 0, ny, 0, ...UV(0, 0));
+    for (let i = 0; i <= N; i++) { const a = 2 * Math.PI * i / N, x = Math.sin(a) * R, z = Math.cos(a) * R; P(x, y, z, 0, ny, 0, ...UV(x, z));
+      if (i) top ? idx.push(c, c + i, c + i + 1) : idx.push(c, c + i + 1, c + i); }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx); return geo;
+}
 function boxGeometry() {
   const { W, D, H, regions: R } = L, w = W / 2, d = D / 2, h = H / 2;
   const pos = [], uv = [], nor = [], idx = [];
@@ -337,7 +370,7 @@ function rebuild3D() {
   tex = new THREE.CanvasTexture(currentTexCanvas());
   tex.encoding = THREE.sRGBEncoding; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   tex.minFilter = THREE.LinearMipmapLinearFilter; // like the game: mipmaps show seam bleeding at a distance
-  mesh = new THREE.Mesh(boxGeometry(), new THREE.MeshLambertMaterial({ map: tex }));
+  mesh = new THREE.Mesh(KIND === "bucket" ? bucketGeometry() : boxGeometry(), new THREE.MeshLambertMaterial({ map: tex }));
   mesh.position.y = L.H / 2; scene.add(mesh);
   const m = Math.max(L.W, L.D, L.H); if (!rebuild3D.done) { dist = m * 3; rebuild3D.done = true; }
 }
@@ -346,7 +379,7 @@ const CAMS = { front: [0, 0.05], back: [Math.PI, 0.05], left: [-Math.PI / 2, 0.0
 // ---------- wiring ----------
 function setPreset(i) {
   if (i === "c") return; const p = PRESETS[+i];
-  $("w").value = p.w; $("d").value = p.d; $("h").value = p.h; $("sid").value = p.id; $("bodycol").value = p.col; rebuild3D.done = false; update();
+  KIND = p.kind || "box"; $("w").value = p.w; $("d").value = p.d; $("h").value = p.h; $("sid").value = p.id; $("bodycol").value = p.col; rebuild3D.done = false; update();
 }
 function loadFile(f) {
   if (!f) return; const img = new Image();
